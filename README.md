@@ -62,3 +62,4 @@ entry 0-г offset 0-д бичлээ
 - `demo.c` — демо эх код
 - `run.sh` — build + valgrind ажиллуулах скрипт
 - `demo-output.txt` — серверээс авсан гүйлтийн бодит гаралт
+- `demo-overflow.gif` — терминал гүйлтийн бичлэг (overflow илрэх агшин)
