@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="mn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>*,*::before,*::after{box-sizing:border-box}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Stagefright overflow лаб</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: lab bench — controls + arithmetic + code on the left, heap memory + terminal on the right */
+:root {
+  --bg: #eef1f5; --surface: #ffffff; --ink: #15202b; --muted: #586677; --line: #d3dae3;
+  --accent: #2456c4; --accent-soft: #dfe7f8;
+  --danger: #c2352a; --danger-soft: #f9e0dd; --ok: #1d7849; --ok-soft: #dcf0e4; --warn: #9a6200; --warn-soft: #f6ead2;
+  --term-bg: #18202a; --term-ink: #d9e2ec; --term-dim: #8796a8;
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e131a; --surface: #151c25; --ink: #e2e8ef; --muted: #8f9cad; --line: #283240;
+  --accent: #7aa2ff; --accent-soft: #1d2a44;
+  --danger: #ff7064; --danger-soft: #3a1c1a; --ok: #52c78e; --ok-soft: #15301f; --warn: #e3a944; --warn-soft: #33270f;
+  --term-bg: #090d12; --term-ink: #d9e2ec; --term-dim: #7d8b9c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e131a; --surface: #151c25; --ink: #e2e8ef; --muted: #8f9cad; --line: #283240;
+  --accent: #7aa2ff; --accent-soft: #1d2a44;
+  --danger: #ff7064; --danger-soft: #3a1c1a; --ok: #52c78e; --ok-soft: #15301f; --warn: #e3a944; --warn-soft: #33270f;
+  --term-bg: #090d12; --term-ink: #d9e2ec; --term-dim: #7d8b9c; color-scheme: dark }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header { display: grid; gap: 6px; margin-bottom: 22px; }
+.eyebrow { font: 600 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-size: clamp(24px, 3.4vw, 34px); line-height: 1.15; margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+header p { margin: 0; max-width: 72ch; color: var(--muted); }
+h2 { font-size: 13px; letter-spacing: .07em; text-transform: uppercase; margin: 0 0 12px; color: var(--muted); font-weight: 600; }
+code, .mono { font-family: var(--mono); font-size: .92em; }
+
+.grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 18px; align-items: start; }
+@media (max-width: 920px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.col { display: grid; gap: 18px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; min-width: 0; }
+
+/* controls */
+.field { display: grid; gap: 6px; margin-bottom: 14px; }
+.field > label, .lbl { font-size: 13px; font-weight: 600; }
+.hint { font-size: 12.5px; color: var(--muted); }
+input[type="text"] { font: 600 17px var(--mono); padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--bg); color: var(--ink); width: 100%; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="text"]:focus-visible, button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input.bad { border-color: var(--danger); }
+.err { color: var(--danger); font-size: 12.5px; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; flex-wrap: wrap; }
+.seg button { border: 0; border-right: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  font: 500 13px var(--sans); padding: 7px 12px; cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--surface); }
+.chipbtn { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 999px;
+  font: 500 12.5px var(--sans); padding: 5px 11px; cursor: pointer; }
+.chipbtn:hover { border-color: var(--accent); }
+.chipbtn code { font-size: 11.5px; color: var(--muted); }
+.toggle { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.toggle input { margin-top: 3px; accent-color: var(--accent); }
+.toggle + .toggle { margin-top: 8px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 460px) { .row2 { grid-template-columns: 1fr; } }
+
+/* arithmetic */
+.status { display: inline-flex; align-items: center; gap: 8px; font: 600 13px var(--mono); padding: 5px 11px; border-radius: 999px; }
+.st-ok { background: var(--ok-soft); color: var(--ok); }
+.st-bad { background: var(--danger-soft); color: var(--danger); }
+.st-warn { background: var(--warn-soft); color: var(--warn); }
+.calc { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 14px 0; font-family: var(--mono); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.calc dt { color: var(--muted); }
+.calc dd { margin: 0; overflow-wrap: anywhere; }
+.calc dd.hl { color: var(--danger); font-weight: 600; }
+.bits-scroll { overflow-x: auto; padding-bottom: 4px; }
+.bits { display: grid; grid-template-columns: repeat(36, minmax(13px, 1fr)); gap: 2px; min-width: 520px; position: relative; }
+.bit { height: 26px; border-radius: 3px; background: var(--bg); border: 1px solid var(--line); font: 600 11px/24px var(--mono);
+  text-align: center; color: var(--muted); }
+.bit.on { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.bit.lost { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+.bit.lost.on { background: var(--danger); color: var(--surface); }
+.bit.wall { box-shadow: 3px 0 0 0 var(--danger); }
+.bitaxis { display: flex; justify-content: space-between; min-width: 520px; font: 11px var(--mono); color: var(--muted); margin-top: 4px; }
+.bitnote { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+
+/* code */
+.code { font: 13px/1.6 var(--mono); overflow-x: auto; background: var(--bg); border-radius: 8px; padding: 10px 0; }
+.code div { white-space: pre; padding: 0 12px; border-left: 3px solid transparent; }
+.code .ln { color: var(--muted); display: inline-block; width: 3.2ch; text-align: right; margin-right: 12px; user-select: none; }
+.code .cur { background: var(--accent-soft); border-left-color: var(--accent); }
+.code .add { background: var(--ok-soft); }
+.code .add .ln { color: var(--ok); }
+.code .cm { color: var(--muted); }
+
+/* heap */
+.heaphead { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.ctrls { display: flex; flex-wrap: wrap; gap: 6px; }
+.btn { border: 1px solid var(--accent); background: var(--accent); color: var(--surface); font: 600 13px var(--sans);
+  padding: 8px 14px; border-radius: 7px; cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.legend span::before { content: ""; display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: -1px;
+  background: var(--sw); border: 1px solid var(--swb, var(--sw)); }
+.mem-scroll { overflow-x: auto; }
+.mem { display: grid; gap: 3px; min-width: 470px; font-family: var(--mono); }
+.mrow { display: grid; grid-template-columns: 94px repeat(8, 1fr) 120px; gap: 3px; align-items: center; }
+.addr { font-size: 11.5px; color: var(--muted); }
+.tag { font-size: 11.5px; color: var(--muted); padding-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell { height: 30px; border-radius: 4px; font: 600 12px/28px var(--mono); text-align: center; border: 1px solid var(--line);
+  color: var(--muted); background: var(--bg); transition: background-color .15s, color .15s; }
+.cell.buf { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.cell.pad { border-style: dashed; }
+.cell.nb { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.cell.w-ok { background: var(--ok); border-color: var(--ok); color: var(--surface); }
+.cell.w-bad { background: var(--danger); border-color: var(--danger); color: var(--surface); }
+.cell.empty { visibility: hidden; }
+.gap-row { text-align: center; font-size: 12px; color: var(--muted); padding: 4px 0; border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line); }
+.readout { margin-top: 12px; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font: 13px var(--mono); }
+.readout dt { color: var(--muted); }
+.readout dd { margin: 0; overflow-wrap: anywhere; }
+.readout dd.bad { color: var(--danger); font-weight: 600; }
+.verdict { margin-top: 12px; padding: 11px 13px; border-radius: 8px; font-size: 14px; }
+.verdict.ok { background: var(--ok-soft); color: var(--ok); }
+.verdict.bad { background: var(--danger-soft); color: var(--danger); }
+.verdict.warn { background: var(--warn-soft); color: var(--warn); }
+.verdict.idle { background: var(--bg); color: var(--muted); }
+.progress { font: 12.5px var(--mono); color: var(--muted); }
+
+/* terminal */
+.term { background: var(--term-bg); color: var(--term-ink); border-radius: 10px; padding: 14px 16px; font: 12.5px/1.55 var(--mono);
+  overflow-x: auto; min-height: 220px; max-height: 420px; overflow-y: auto; }
+.term div { white-space: pre; }
+.term .dim { color: var(--term-dim); }
+.term .vg { color: #ff8a7f; }
+.term .ok { color: #6fd6a0; }
+.term .cmd { color: #9fc0ff; }
+.note { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; max-width: 75ch; }
+footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); max-width: 90ch; display: grid; gap: 6px; }
+footer a { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .cell { transition: none; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">ICSI251 · CVE-2015-1538 · libStagefright</span>
+    <h1>Stagefright overflow лаб</h1>
+    <p><code>count</code>, entry хэмжээ, <code>size_t</code>-ийн өргөнийг өөрчилж, <code>count * entry</code> хэзээ wrap хийж, хэт бага <code>malloc</code> heap дээр хөрш объектыг хэрхэн дарж бичихийг алхам алхмаар ажиглана. Логик нь <code>demo.c</code>-тэй ижил; terminal-ын гаралт серверийн бодит valgrind гүйлтийн форматыг давтана.</p>
+  </header>
+
+  <div class="grid">
+    <div class="col">
+      <section class="panel" aria-labelledby="h-in">
+        <h2 id="h-in">Оролт</h2>
+        <div class="field">
+          <label for="count">count <span class="hint">(MP4-ийн <code>stsc</code> атомоос уншсан entry-ийн тоо, <code>uint32_t</code>)</span></label>
+          <input type="text" id="count" value="0x40000001" spellcheck="false" autocomplete="off">
+          <input type="range" id="countSlider" min="0" max="1000" value="0" aria-label="count (лог шкал)">
+          <span class="hint">Гулсуулагч нь 1-ээс 0xFFFFFFFF хүртэл лог шкалаар явна. Яг утгыг дээр бичнэ.</span>
+          <span class="err" id="countErr" hidden></span>
+          <div class="presets" role="group" aria-label="Бэлэн утгууд">
+            <button class="chipbtn" data-c="0x40000001">Халдагчийн утга <code>0x40000001</code></button>
+            <button class="chipbtn" data-c="12">Хэвийн файл <code>12</code></button>
+            <button class="chipbtn" data-c="0x20000000">0 руу wrap <code>0x20000000</code></button>
+            <button class="chipbtn" data-c="0x40000003">24 байт <code>0x40000003</code></button>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <span class="lbl" id="l-entry">entry хэмжээ (байт)</span>
+            <div class="seg" role="group" aria-labelledby="l-entry" id="entrySeg">
+              <button data-v="4">4</button><button data-v="8" aria-pressed="true">8</button><button data-v="12">12</button><button data-v="16">16</button>
+            </div>
+          </div>
+          <div class="field">
+            <span class="lbl" id="l-width">size_t өргөн</span>
+            <div class="seg" role="group" aria-labelledby="l-width" id="widthSeg">
+              <button data-v="32" aria-pressed="true">32 бит</button><button data-v="64">64 бит</button>
+            </div>
+            <span class="hint">2015 оны Android (ARMv7) = 32 бит</span>
+          </div>
+        </div>
+        <label class="toggle" for="fix">
+          <input type="checkbox" id="fix">
+          <span><strong>Засвар идэвхжүүлэх</strong><br><span class="hint">Үржихээс өмнө <code>count &gt; UINT32_MAX / entry</code> эсэхийг шалгаж, файлыг татгалзана. Patch-ийн логик ийм.</span></span>
+        </label>
+        <label class="toggle" for="vg">
+          <input type="checkbox" id="vg" checked>
+          <span><strong>valgrind memcheck дор ажиллуулах</strong><br><span class="hint">Унтраавал утсан дээрх шиг ямар ч илрүүлэгчгүй ажиллаж, бичилт хөрш объект руу үргэлжилнэ.</span></span>
+        </label>
+      </section>
+
+      <section class="panel" aria-labelledby="h-calc">
+        <h2 id="h-calc">Арифметик</h2>
+        <span class="status" id="status">…</span>
+        <dl class="calc" id="calc"></dl>
+        <div class="lbl" style="margin-bottom:6px">count × entry, бит түвшинд</div>
+        <div class="bits-scroll">
+          <div class="bits" id="bits"></div>
+          <div class="bitaxis"><span>bit 35</span><span>32 | 31</span><span>bit 0</span></div>
+        </div>
+        <p class="bitnote" id="bitnote"></p>
+      </section>
+
+      <section class="panel" aria-labelledby="h-code">
+        <h2 id="h-code">demo.c</h2>
+        <div class="code" id="code"></div>
+        <p class="note">Мөрийн дугаар нь репо дахь <code>demo.c</code>-тэй таарна. Ногоон мөр нь засварыг асаахад л нэмэгдэнэ.</p>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="panel" aria-labelledby="h-heap">
+        <div class="heaphead">
+          <h2 id="h-heap" style="margin:0">Heap санах ой</h2>
+          <div class="ctrls">
+            <button class="btn" id="stepBtn">Нэг entry бичих</button>
+            <button class="btn ghost" id="playBtn">Тоглуулах</button>
+            <button class="btn ghost" id="endBtn">Дуустал</button>
+            <button class="btn ghost" id="resetBtn">Дахин эхлүүлэх</button>
+          </div>
+        </div>
+        <div class="legend">
+          <span style="--sw:var(--accent-soft);--swb:var(--accent)">malloc-оор авсан buf</span>
+          <span style="--sw:var(--warn-soft);--swb:var(--warn)">хөрш chunk</span>
+          <span style="--sw:var(--ok)">хил дотор бичсэн</span>
+          <span style="--sw:var(--danger)">хил давж бичсэн</span>
+        </div>
+        <div class="mem-scroll"><div class="mem" id="mem"></div></div>
+        <dl class="readout" id="readout"></dl>
+        <div class="verdict idle" id="verdict"></div>
+        <p class="progress" id="progress"></p>
+        <p class="note">Хөрш объект ба түүний хаягууд нь жишээ. Жинхэнэ exploit heap grooming-оор buf-ын ард vtable pointer-тэй объект байрлуулдаг байв. Санах ой little-endian тул <code>vtable*</code>-ийн бага байт эхэнд байна.</p>
+      </section>
+
+      <section aria-labelledby="h-term">
+        <h2 id="h-term">Terminal</h2>
+        <div class="term" id="term" aria-live="polite"></div>
+      </section>
+    </div>
+  </div>
+
+  <footer>
+    <span>Эх код ба серверийн бодит гаралт: <a href="https://github.com/Apoca72/stagefright-demo">github.com/Apoca72/stagefright-demo</a> (<code>demo.c</code>, <code>run.sh</code>, <code>demo-output.txt</code>). Сервер: Debian 13, gcc 14.2.0, valgrind 3.24, <code>-std=c11 -O0 -g</code>.</span>
+    <span>С.Тэмүүлэн · Э.Хангарьд — ICSI251 нэмэлт даалгавар</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const BASE = 0x4a58080n;            // real block address from demo-output.txt
+  const NB = [                        // illustrative neighbour chunk, 8-byte fields
+    { name: "chunk size", val: 0x21n },
+    { name: "vtable*", val: 0x00007f3a1c2048d0n },
+    { name: "mOwner*", val: 0x00005581a2c3e010n },
+  ];
+  const BIG_MALLOC = 0x40000000n;     // above this, treat malloc as failing
+  const NO_VG_TAIL = 24;              // bytes of neighbour shown
+
+  const $ = id => document.getElementById(id);
+  const st = { count: 0x40000001n, entry: 8, width: 32, fix: false, vg: true };
+  let sim, timer = null;
+
+  const hex = (v, pad = 0) => "0x" + v.toString(16).padStart(pad, "0");
+  const fmt = v => v.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  const human = v => {
+    const u = ["байт", "КБ", "МБ", "ГБ", "ТБ"]; let x = Number(v), i = 0;
+    while (x >= 1024 && i < u.length - 1) { x /= 1024; i++; }
+    return (i ? x.toFixed(x < 10 ? 2 : 1) : x) + " " + u[i];
+  };
+
+  function parseCount(s) {
+    s = s.trim().replace(/[\s_]/g, "");
+    if (!s) return { err: "Утга оруулна уу." };
+    let v;
+    try {
+      if (/^0x[0-9a-f]+$/i.test(s)) v = BigInt(s);
+      else if (/^\d+$/.test(s)) v = BigInt(s);
+      else return { err: "Аравтын тоо эсвэл 0x-ээр эхэлсэн hex оруулна уу." };
+    } catch { return { err: "Тоог уншиж чадсангүй." }; }
+    if (v > 0xFFFFFFFFn) return { err: "count нь uint32_t: 0xFFFFFFFF (4 294 967 295)-ээс их байж болохгүй." };
+    return { v };
+  }
+
+  function compute() {
+    const count = st.count, entry = BigInt(st.entry);
+    const needed = count * entry;
+    const mask = st.width === 32 ? 0xFFFFFFFFn : 0xFFFFFFFFFFFFFFFFn;
+    const bytes = needed & mask;
+    const wrapped = bytes !== needed;
+    const rejected = st.fix && st.width === 32 && count > 0xFFFFFFFFn / entry;
+    const mallocFail = !rejected && bytes > BIG_MALLOC;
+    const B8 = Number((bytes + 7n) / 8n * 8n);
+    return { count, entry: st.entry, needed, bytes, wrapped, rejected, mallocFail, B8,
+      i: 0n, wEnd: 0n, state: "ready", nbBytes: nbBytes(), firstBad: null, line: 36 };
+  }
+
+  function nbBytes() {
+    const out = [];
+    for (const f of NB) for (let k = 0n; k < 8n; k++) out.push(Number((f.val >> (8n * k)) & 0xFFn));
+    return out;
+  }
+
+  // ---------- render: arithmetic ----------
+  function renderCalc() {
+    const s = sim, w = st.width;
+    const status = $("status");
+    if (s.rejected) { status.className = "status st-ok"; status.textContent = "ТАТГАЛЗСАН · ERROR_OUT_OF_RANGE"; }
+    else if (s.wrapped) { status.className = "status st-bad"; status.textContent = "WRAP · буфер хэт бага"; }
+    else if (s.mallocFail) { status.className = "status st-warn"; status.textContent = "malloc → NULL"; }
+    else { status.className = "status st-ok"; status.textContent = "OK · үржвэр багтаж байна"; }
+
+    $("calc").innerHTML = `
+      <dt>count</dt><dd>${hex(s.count, 8)} (${fmt(s.count)})</dd>
+      <dt>entry</dt><dd>${s.entry} байт</dd>
+      <dt>жинхэнэ хэрэгтэй</dt><dd>${hex(s.needed)} = ${fmt(s.needed)} байт (${human(s.needed)})</dd>
+      <dt>bytes (${w} бит)</dt><dd class="${s.wrapped ? "hl" : ""}">${hex(s.bytes, w === 32 ? 8 : 0)} = ${fmt(s.bytes)} байт${s.wrapped ? "  ← wrap" : ""}</dd>
+      <dt>алдагдсан</dt><dd class="${s.wrapped ? "hl" : ""}">${s.wrapped ? hex(s.needed - s.bytes) + " = " + human(s.needed - s.bytes) : "0"}</dd>`;
+
+    const bits = $("bits"); bits.innerHTML = "";
+    for (let b = 35; b >= 0; b--) {
+      const on = (s.needed >> BigInt(b)) & 1n;
+      const el = document.createElement("div");
+      el.className = "bit" + (on ? " on" : "") + (w === 32 && b >= 32 ? " lost" : "") + (b === 32 && w === 32 ? " wall" : "");
+      el.textContent = on ? "1" : "0";
+      el.title = "bit " + b;
+      bits.appendChild(el);
+    }
+    const hi = s.needed >> 32n;
+    $("bitnote").textContent = w === 32
+      ? (hi ? `32 битийн register-т зөвхөн bit 31..0 багтана. Дээд хэсэг ${hex(hi)} (улаан) алга болж, malloc ${fmt(s.bytes)} байт л авна. -O0 дээр gcc үүнийг imul …,%eax (32 бит) болгож хөрвүүлдэг.`
+            : "Үржвэр bit 31-ээс доош байгаа тул 32 бит хангалттай. Юу ч алдагдахгүй.")
+      : "64 бит size_t: uint32 × 16 ч гэсэн 2^36-аас бага тул үржвэр хэзээ ч wrap хийхгүй (imul %rdx,%rax).";
+  }
+
+  // ---------- render: code ----------
+  function renderCode() {
+    const L = [
+      [31, "    uint32_t count = ATTACKER_COUNT;"],
+      [32, "    uint32_t entry = ENTRY_SIZE;"],
+      [36, st.width === 32 ? "    uint32_t bytes = count * entry;" : "    size_t   bytes = (size_t)count * entry;   /* 64 бит */"],
+      [40, "    uint64_t needed = (uint64_t)count * (uint64_t)entry;"],
+    ];
+    const fixL = [["+", "    if (count > UINT32_MAX / entry) return ERROR_OUT_OF_RANGE;"]];
+    const rest = [
+      [51, "    uint8_t *buf = (uint8_t *)malloc(bytes);"],
+      [52, "    if (buf == NULL) { perror(\"malloc\"); return 1; }"],
+      [60, "    for (uint32_t i = 0; i < count; i++) {"],
+      [63, "        memset(buf + (uint64_t)i * entry, 0x41, entry);"],
+      [64, "    }"],
+    ];
+    const lines = [...L, ...(st.fix ? fixL : []), ...rest];
+    $("code").innerHTML = lines.map(([n, t]) =>
+      `<div class="${n === "+" ? "add" : ""}${n === sim.line ? " cur" : ""}"><span class="ln">${n}</span>${esc(t)}</div>`).join("");
+  }
+  const esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+  // ---------- render: heap ----------
+  function region(off) {
+    const s = sim, b = Number(s.bytes);
+    if (off < b) return "buf";
+    if (off < s.B8) return "pad";
+    if (off < s.B8 + NO_VG_TAIL) return "nb";
+    return null;
+  }
+
+  function cellHTML(off) {
+    const r = region(off);
+    if (!r) return `<div class="cell empty"></div>`;
+    const o = BigInt(off);
+    let cls = "cell " + r, txt;
+    if (o < sim.wEnd) { cls += o >= sim.bytes ? " w-bad" : " w-ok"; txt = "41"; }
+    else if (r === "nb") txt = sim.nbBytes[off - sim.B8].toString(16).padStart(2, "0");
+    else txt = r === "pad" ? "··" : "??";
+    return `<div class="${cls}" title="buf+${off}">${txt}</div>`;
+  }
+
+  function rowHTML(start, tag) {
+    let h = `<div class="mrow"><span class="addr">${hex(BASE + BigInt(start))}</span>`;
+    for (let k = 0; k < 8; k++) h += cellHTML(start + k);
+    return h + `<span class="tag">${tag}</span></div>`;
+  }
+
+  function renderHeap() {
+    const s = sim, mem = $("mem");
+    if (s.rejected || s.mallocFail) {
+      mem.innerHTML = `<div class="gap-row">${s.rejected ? "malloc дуудагдаагүй: шалгалт файлыг эрт татгалзсан." : "malloc(" + fmt(s.bytes) + ") NULL буцаасан тул heap дээр юу ч бичигдээгүй."}</div>`;
+      renderReadout(); renderVerdict(); return;
+    }
+    const b = Number(s.bytes);
+    let h = "";
+    const bufRows = s.B8 / 8;
+    const tagFor = r => r === 0 ? `buf (${fmt(s.bytes)} байт)` : "";
+    if (bufRows <= 12) {
+      for (let r = 0; r < bufRows; r++) h += rowHTML(r * 8, tagFor(r));
+    } else {
+      for (let r = 0; r < 4; r++) h += rowHTML(r * 8, tagFor(r));
+      h += `<div class="gap-row">… ${fmt(BigInt((bufRows - 7) * 8))} байт харуулаагүй …</div>`;
+      for (let r = bufRows - 3; r < bufRows; r++) h += rowHTML(r * 8, "");
+    }
+    if (b === 0) h += `<div class="gap-row">buf = 0 байт: malloc(0) хоосон блок буцаана</div>`;
+    NB.forEach((f, k) => h += rowHTML(s.B8 + k * 8, (k === 0 ? "хөрш: " : "") + f.name));
+    mem.innerHTML = h;
+    renderReadout(); renderVerdict();
+  }
+
+  function fieldValue(k) {
+    let v = 0n;
+    for (let j = 7; j >= 0; j--) {
+      const off = sim.B8 + k * 8 + j;
+      const byte = BigInt(off) < sim.wEnd ? 0x41 : sim.nbBytes[k * 8 + j];
+      v = (v << 8n) | BigInt(byte);
+    }
+    return v;
+  }
+
+  function renderReadout() {
+    const s = sim;
+    if (s.rejected || s.mallocFail) { $("readout").innerHTML = ""; return; }
+    let h = "";
+    NB.forEach((f, k) => {
+      const v = fieldValue(k), changed = v !== f.val;
+      h += `<dt>${f.name}</dt><dd class="${changed ? "bad" : ""}">${hex(v, 16)}${changed ? "  (дарагдсан)" : ""}</dd>`;
+    });
+    $("readout").innerHTML = h;
+  }
+
+  function renderVerdict() {
+    const s = sim, v = $("verdict");
+    const set = (c, t) => { v.className = "verdict " + c; v.innerHTML = t; };
+    if (s.rejected) return set("ok", "Засвар ажиллалаа. <code>count &gt; UINT32_MAX / entry</code> үнэн тул parser файлыг <code>ERROR_OUT_OF_RANGE</code>-ээр буцаалаа. malloc ба бичилт хийгдээгүй.");
+    if (s.mallocFail) return set("warn", `${human(s.bytes)} блок авах боломжгүй (32 бит процесс 4 ГБ хаягийн орон зайтай, серверт <code>ulimit -v</code> 4 ГБ). <code>buf == NULL</code> шалгалт процессыг зогсооно. Overflow үүсэхгүй.`);
+    if (s.state === "ready") return set("idle", s.wrapped
+      ? `malloc(${fmt(s.bytes)}) хийгдлээ, гэхдээ давталт ${fmt(s.count)} удаа ${s.entry} байт бичих гэж байна. “Нэг entry бичих” дарж үзээрэй.`
+      : `malloc(${fmt(s.bytes)}) хийгдлээ. Давталт ${fmt(s.count)} удаа бичнэ.`);
+    if (s.state === "running") return set("idle", s.firstBad === null ? "Одоогоор хил дотор бичиж байна." : "Хил давсан, бичилт үргэлжилж байна…");
+    if (s.state === "done-ok") return set("ok", `${fmt(s.count)} entry бүгд buf дотор багтлаа. Хил давсангүй.`);
+    if (s.state === "vg-stop") return set("bad", `valgrind entry ${s.firstBad}-ийн бичилтийг барьж процессыг зогсоолоо: <code>buf+${s.firstBadOff}</code> нь ${fmt(s.bytes)} байтын блокоос ${s.firstBadOff - Number(s.bytes)} байтын цаана.`);
+    if (s.state === "hijack") return set("bad", `Илрүүлэгчгүй үед бичилт хөрш объектыг бүхэлд нь дарлаа. <code>vtable*</code> = <code>0x4141414141414141</code>. Объектын virtual method дуудагдахад CPU энэ хаягаас function pointer уншиж үсэрнэ. Халдагч 'A'-ийн оронд өөрийн хаяг (ROP gadget) тавьбал mediaserver-ийн эрхээр код ажиллана.`);
+  }
+
+  // ---------- terminal ----------
+  const PID = "1620590";
+  let termLines = [];
+  function tl(cls, t) { termLines.push([cls, t]); }
+  function renderTerm() {
+    const t = $("term");
+    t.innerHTML = termLines.map(([c, x]) => `<div class="${c}">${esc(x)}</div>`).join("");
+    t.scrollTop = t.scrollHeight;
+  }
+  function vgl(t) { tl("vg", `==${PID}== ${t}`); }
+
+  function termStart() {
+    termLines = [];
+    const s = sim;
+    tl("cmd", "$ gcc -std=c11 -Wall -Wextra -g -O0 -o demo demo.c");
+    if (st.vg) {
+      tl("cmd", "$ valgrind --exit-on-first-error=yes --error-exitcode=42 ./demo");
+      tl("", "");
+      vgl("Memcheck, a memory error detector"); vgl("Command: ./demo"); vgl("");
+    } else { tl("cmd", "$ ./demo"); tl("", ""); }
+    tl("", `count            = ${hex(s.count, 8)} (${s.count})`);
+    tl("", `entry size       = ${s.entry} byte`);
+    tl("", `needed (64-bit)  = ${hex(s.needed)} byte (${s.needed})`);
+    tl(s.wrapped ? "vg" : "", `bytes  (${st.width}-bit)  = ${hex(s.bytes, st.width === 32 ? 8 : 0)} byte (${s.bytes})${s.wrapped ? "  <-- wrap!" : ""}`);
+    if (s.rejected) { tl("ok", "count > UINT32_MAX / entry -> ERROR_OUT_OF_RANGE (файл татгалзагдлаа)"); }
+    else if (s.mallocFail) { tl("", ""); tl("vg", "malloc: Cannot allocate memory"); }
+    else tl("", `malloc(${s.bytes}) дуудаж, ${s.count} entry бичих гэж байна...`), tl("", "");
+    renderTerm();
+  }
+
+  // ---------- simulation ----------
+  function step() {
+    const s = sim;
+    if (s.rejected || s.mallocFail || s.state.startsWith("done") || s.state === "vg-stop" || s.state === "hijack") return false;
+    if (s.i >= s.count) { finishOk(); return false; }
+    s.state = "running"; s.line = 63;
+    const start = s.i * BigInt(s.entry), end = start + BigInt(s.entry);
+    const b = s.bytes;
+    const limit = BigInt(s.B8 + NO_VG_TAIL);
+    if (end > b && st.vg) {
+      const badOff = Number(start > b ? start : b);
+      if (start < b) s.wEnd = b;
+      s.firstBad = s.i; s.firstBadOff = badOff; s.state = "vg-stop";
+      if (s.i < 4n) tl("", "");
+      vgl(`Invalid write of size ${s.entry}`);
+      vgl("   at 0x48524AE: memset (vg_replace_strmem.c:1390)");
+      vgl("   by 0x1092BD: main (demo.c:63)");
+      vgl(` Address ${hex(BASE + BigInt(badOff))} is ${badOff - Number(b)} bytes after a block of size ${b} alloc'd`);
+      vgl("   at 0x4844818: malloc (vg_replace_malloc.c:446)");
+      vgl("   by 0x10926C: main (demo.c:51)");
+      vgl(""); vgl("Exit program on first error (--exit-on-first-error=yes)");
+      stopPlay(); renderAll(); return false;
+    }
+    s.wEnd = end < limit ? end : limit;
+    if (end > b && s.firstBad === null) { s.firstBad = s.i; s.firstBadOff = Number(start > b ? start : b); }
+    if (s.i < 4n) tl("", `entry ${s.i}-г offset ${start}-д бичлээ`);
+    s.i++;
+    if (end >= limit && end > b) {
+      s.state = "hijack";
+      tl("", "...");
+      tl("vg", "(хөрш объектын virtual method дуудагдав) -> jmp *0x4141414141414141");
+      tl("vg", "Segmentation fault   # эсвэл халдагчийн ROP chain ажиллана");
+      stopPlay(); renderAll(); return false;
+    }
+    if (s.i >= s.count) { finishOk(); return false; }
+    return true;
+  }
+
+  function finishOk() {
+    const s = sim;
+    s.state = "done-ok"; s.line = 64;
+    if (s.count > 4n) tl("dim", `... (нийт ${s.count} entry)`);
+    tl("ok", "overflow алга: бүх бичилт buf дотор");
+    if (st.vg) { vgl(""); vgl("ERROR SUMMARY: 0 errors from 0 contexts"); }
+    stopPlay(); renderAll();
+  }
+
+  function runToEnd() {
+    stopPlay();
+    const s = sim;
+    // fast-forward through in-bounds entries without stepping one by one
+    if (!s.rejected && !s.mallocFail && s.state !== "vg-stop" && s.state !== "hijack") {
+      const per = BigInt(s.entry);
+      const safeEntries = s.bytes / per;                 // entries fully inside buf
+      const lastShown = BigInt(Math.max(0, s.B8 - 64));  // keep visible tail animated
+      const target = (safeEntries < s.count ? safeEntries : s.count);
+      const skipTo = target > lastShown / per ? lastShown / per : target;
+      while (s.i < 4n && s.i < target) step();
+      if (s.i < skipTo) {
+        s.wEnd = skipTo * per;
+        s.i = skipTo;
+      }
+      let guard = 0;
+      while (step() && guard++ < 20000) {}
+    }
+    renderAll();
+  }
+
+  function play() {
+    if (timer) { stopPlay(); renderAll(); return; }
+    if (!step()) { renderAll(); return; }
+    renderAll();
+    $("playBtn").textContent = "Зогсоох";
+    timer = setInterval(() => { const go = step(); renderAll(); if (!go) stopPlay(); }, 420);
+  }
+  function stopPlay() { if (timer) clearInterval(timer); timer = null; $("playBtn").textContent = "Тоглуулах"; }
+
+  function renderAll() {
+    renderCalc(); renderCode(); renderHeap(); renderTerm();
+    const s = sim, ended = s.rejected || s.mallocFail || ["done-ok", "vg-stop", "hijack"].includes(s.state);
+    $("stepBtn").disabled = ended; $("endBtn").disabled = ended; $("playBtn").disabled = ended && !timer;
+    $("progress").textContent = s.rejected || s.mallocFail ? "" :
+      `i = ${fmt(s.i)} / ${fmt(s.count)} · бичсэн байт = ${fmt(s.i * BigInt(s.entry))} · buf = ${fmt(s.bytes)} байт`;
+  }
+
+  function reset() {
+    stopPlay();
+    sim = compute();
+    if (sim.rejected) sim.line = "+"; else if (sim.mallocFail) sim.line = 52; else sim.line = 51;
+    termStart(); renderAll();
+  }
+
+  // ---------- wiring ----------
+  const MAXC = 4294967295;
+  const toSlider = c => Math.round(Math.log(Math.max(1, Number(c))) / Math.log(MAXC) * 1000);
+  $("countSlider").value = toSlider(st.count);
+  $("countSlider").addEventListener("input", e => {
+    const c = BigInt(Math.min(MAXC, Math.round(Math.exp(e.target.value / 1000 * Math.log(MAXC)))));
+    $("count").value = hex(c); st.count = c;
+    $("count").classList.remove("bad"); $("countErr").hidden = true; reset();
+  });
+  $("count").addEventListener("input", e => {
+    const r = parseCount(e.target.value);
+    e.target.classList.toggle("bad", !!r.err);
+    $("countErr").hidden = !r.err; $("countErr").textContent = r.err || "";
+    if (!r.err) { st.count = r.v; $("countSlider").value = toSlider(r.v); reset(); }
+  });
+  document.querySelectorAll("[data-c]").forEach(b => b.addEventListener("click", () => {
+    $("count").value = b.dataset.c; $("count").dispatchEvent(new Event("input"));
+  }));
+  function seg(id, key) {
+    const root = $(id);
+    root.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+      root.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+      st[key] = Number(b.dataset.v); reset();
+    }));
+    root.querySelectorAll("button:not([aria-pressed])").forEach(b => b.setAttribute("aria-pressed", "false"));
+  }
+  seg("entrySeg", "entry"); seg("widthSeg", "width");
+  $("fix").addEventListener("change", e => { st.fix = e.target.checked; reset(); });
+  $("vg").addEventListener("change", e => { st.vg = e.target.checked; reset(); });
+  $("stepBtn").addEventListener("click", () => { stopPlay(); step(); renderAll(); });
+  $("playBtn").addEventListener("click", play);
+  $("endBtn").addEventListener("click", runToEnd);
+  $("resetBtn").addEventListener("click", reset);
+
+  reset();
+})();
+</script>
+
+</body>
+</html>
